@@ -1,0 +1,407 @@
+<?wh
+LOADLIB "wh::internet/urls.whlib";
+LOADLIB "wh::internet/json.whlib";
+LOADLIB "wh::internet/webbrowser.whlib";
+LOADLIB "wh::datetime.whlib";
+LOADLIB "wh::files.whlib";
+LOADLIB "wh::money.whlib";
+LOADLIB "module::system/cache.whlib";
+LOADLIB "relative::internal/support.whlib";
+
+//__webbrowser_debugall := TRUE;
+
+PUBLIC OBJECTTYPE HarvestAPI
+<
+  //************************************************************
+  //
+  // Private variables
+  //
+  STRING username;
+  STRING password;
+
+  //************************************************************
+  //
+  // Constructor
+  //
+  MACRO NEW(STRING username, STRING password)
+  {
+    this->username := username;
+    this->password := password;
+  }
+
+  //************************************************************
+  //
+  // Public functions
+  //
+  PUBLIC RECORD ARRAY FUNCTION GetHarvestAPIResult(STRING path)
+  {
+    IF (Left(path,1) != "/")
+      path := "/" || path;
+
+    STRING url := "https://" || EncodeURL(this->username) || ":" || this->password || "@nerdsandcompany.harvestapp.com" || path;
+
+    OBJECT browser := NEW WebBrowser;
+    browser->SendRawRequest("GET", url, [[ field := "Content-Type", value := "application/json" ]
+                                        ,[ field := "Accept", value := "application/json" ]
+                                        ], DEFAULT BLOB);
+    IF (Length(browser->content) = 0)
+      RETURN DEFAULT RECORD ARRAY;
+
+    STRING browsercontent := BlobToString(browser->content,-1);
+    IF (browsercontent = "[]" OR TrimWhiteSpace(browsercontent) = "")
+      RETURN DEFAULT RECORD ARRAY;
+
+    RETURN DecodeJSON(browsercontent);
+  }
+
+  /** @short Returns active clients.
+      @return
+        @cell(INTEGER) return.id
+        @cell(STRING) return.name
+        @cell(STRING) return.details
+        @cell(DATETIME) return.created_at
+        @cell(DATETIME) return.updated_at
+  */
+  PUBLIC RECORD ARRAY FUNCTION GetActiveClients()
+  {
+    RETURN GetAdhocCached([ type := "active-clients" ], PTR this->GetCachedActiveClients);
+  }
+
+  /** @short Returns all active projects.
+      @return
+        @cell(INTEGER) return.id
+        @cell(STRING) return.name
+        @cell(BOOLEAN) return.active
+        @cell(INTEGER) return.client_id
+        @cell(MONEY) return.hourly_rate
+        @cell(MONEY) return.budget
+        @cell(DATETIME) return.started_on
+        @cell(DATETIME) return.ended_on
+  */
+  PUBLIC RECORD ARRAY FUNCTION GetActiveProjects()
+  {
+    RETURN GetAdhocCached([ type := "active-projects" ], PTR this->GetCachedActiveProjects);
+  }
+
+  /** @short Returns all projects, including inactive ones. Returns the same data as GetProjects.
+  */
+  PUBLIC RECORD ARRAY FUNCTION GetAllProjects()
+  {
+    RETURN GetAdhocCached([ type := "all-projects" ], PTR this->GetAllCachedProjects);
+  }
+
+  PUBLIC RECORD ARRAY FUNCTION GetProjectsByClientId(INTEGER clientid)
+  {
+    RETURN GetAdhocCached([ type := "projectsbyclient"
+                          , clientid := clientid
+                          ], PTR this->GetCachedProjectsByClient(clientid));
+  }
+
+  PUBLIC RECORD ARRAY FUNCTION GetEntriesByProject(INTEGER projectid, RECORD filters)
+  {
+    DATETIME dtfrom := CellExists(filters, "dtfrom")   ? filters.dtfrom : DEFAULT DATETIME;
+    DATETIME dtuntil := CellExists(filters, "dtuntil") ? filters.dtuntil : DEFAULT DATETIME;
+
+    RETURN GetAdhocCached([ type := "entries"
+                          , id := projectid
+                          , dtfrom := dtfrom
+                          , dtuntil := dtuntil
+                          ], PTR this->GetCachedEntriesByProject(projectid, dtfrom, dtuntil));
+  }
+
+  /** @short Returns tasks.
+      @return
+        @cell(INTEGER) return.id
+        @cell(STRING) return.name
+        @cell(DATETIME) return.created_at
+        @cell(DATETIME) return.updated_at
+        @cell(MONEY) return.default_hourly_rate
+        @cell(BOOLEAN) return.deactivated
+  */
+  PUBLIC RECORD ARRAY FUNCTION GetTasks()
+  {
+    RETURN GetAdhocCached([ type := "tasks" ], PTR this->GetCachedTasks());
+  }
+
+  /** @short Returns users.
+      @return
+        @cell(INTEGER) return.id
+        @cell(STRING) return.first_name
+        @cell(STRING) return.last_name
+        @cell(STRING) return.department
+        @cell(MONEY) return.default_hourly_rate
+        @cell(DATETIME) return.created_at
+        @cell(DATETIME) return.updated_at
+        @cell(BOOLEAN) return.is_active
+        @cell(BOOLEAN) return.is_admin
+        @cell(BOOLEAN) return.is_contractor
+  */
+  PUBLIC RECORD ARRAY FUNCTION GetUsers()
+  {
+    RETURN GetAdhocCached([ type := "users" ], PTR this->GetCachedUsers());
+  }
+
+
+  //************************************************************
+  //
+  // Caching functions
+  //
+  RECORD FUNCTION GetCachedActiveClients()
+  {
+    /*
+      +ACTIVE: TRUE
+      +CACHE_VERSION: 584683657
+      +CREATED_AT: '2014-12-10T10:55:22Z'
+      +CURRENCY: 'Euro - EUR'
+      +CURRENCY_SYMBOL: '\u20AC'
+      +DETAILS: 'Nobelstraat 8\r\n7651 DC Tubbergen'
+      +ID: 3035061
+      +LAST_INVOICE_KIND: 'free_form'
+      +NAME: 'Aannemersbedrijf Hoek'
+      +STATEMENT_KEY: '8617c40d0b2ab1341ffbe6e5d3ddd653'
+      +UPDATED_AT: '2015-11-24T09:44:20Z'
+      +DEFAULT_INVOICE_TIMEFRAME: DEFAULT RECORD
+      +HIGHRISE_ID: DEFAULT RECORD
+    */
+    RECORD ARRAY clientdata := this->GetHarvestAPIResult("/clients");
+
+    RECORD ARRAY clients;
+    FOREVERY (RECORD row FROM clientdata)
+    {
+      IF (RecordExists(row.client) AND row.client.active)
+        INSERT row.client INTO clients AT END;
+    }
+
+    clients := SELECT id
+                    , name
+                    , details
+                    , created_at := CellExists(clients, "created_at") AND TypeID(created_at) = TypeID(STRING) ? MakeDateFromText(created_at) : DEFAULT DATETIME
+                    , updated_at := CellExists(clients, "updated_at") AND TypeID(updated_at) = TypeID(STRING) ? MakeDateFromText(updated_at) : DEFAULT DATETIME
+                 FROM clients;
+
+    RETURN [ value := clients
+           , ttl := 10 * 60000 // 10 mins
+           ];
+  }
+
+  RECORD FUNCTION GetCachedActiveProjects()
+  {
+    /* /projects returns:
+
+      +ACTIVE: FALSE
+      +BILLABLE: TRUE
+      +BILL_BY: 'none'
+      +BUDGET_BY: 'none'
+      +CLIENT_ID: 2170081
+      +COST_BUDGET_INCLUDE_EXPENSES: FALSE
+      +CREATED_AT: '2014-01-08T10:49:51Z'
+      +ESTIMATE_BY: 'none'
+      +HINT_EARLIEST_RECORD_AT: '2014-01-08'
+      +HINT_LATEST_RECORD_AT: '2014-05-16'
+      +ID: 4793604
+      +NAME: 'Internal'
+      +NOTES: ''
+      +NOTIFY_WHEN_OVER_BUDGET: FALSE
+      +OVER_BUDGET_NOTIFICATION_PERCENTAGE: 80.00000000000000000000
+      +SHOW_BUDGET_TO_ALL: FALSE
+      +STARTS_ON: '2014-01-08'
+      +UPDATED_AT: '2015-03-24T14:02:40Z'
+      +BUDGET: DEFAULT RECORD
+      +CODE: DEFAULT RECORD
+      +COST_BUDGET: DEFAULT RECORD
+      +ENDS_ON: DEFAULT RECORD
+      +ESTIMATE: DEFAULT RECORD
+      +HOURLY_RATE: DEFAULT RECORD
+      +OVER_BUDGET_NOTIFIED_AT: DEFAULT RECORD'.
+    */
+    RECORD ARRAY projectdata := this->GetHarvestAPIResult("/projects");
+
+    RECORD ARRAY projects := SELECT *
+                               FROM this->NormalizeProjects(projectdata)
+                              WHERE active;
+
+    RETURN [ value := projects
+           , ttl := 10 * 60000 // 10 mins
+           ];
+  }
+
+
+  RECORD FUNCTION GetAllCachedProjects()
+  {
+    RECORD ARRAY projectdata := this->GetHarvestAPIResult("/projects");
+
+    RECORD ARRAY projects := this->NormalizeProjects(projectdata);
+
+    RETURN [ value := projects
+           , ttl := 10 * 60000 // 10 mins
+           ];
+  }
+
+  RECORD FUNCTION GetCachedProjectsByClient(INTEGER clientid)
+  {
+    RECORD ARRAY projectdata := this->GetHarvestAPIResult("/projects?client=" || clientid);
+
+    RECORD ARRAY projects := this->NormalizeProjects(projectdata);
+
+    RETURN [ value := projects
+           , ttl := 10 * 60000 // 10 mins
+           ];
+  }
+
+  RECORD FUNCTION GetCachedEntriesByProject(INTEGER projectid, DATETIME dtfrom, DATETIME dtuntil)
+  {
+    /*
+      +RECORD
+       +DAY_ENTRY: RECORD
+        +ADJUSTMENT_RECORD: FALSE
+        +CREATED_AT: '2015-07-14T10:19:55Z'
+        +HOURS: 0.50000000000000000000
+        +ID: 353143785
+        +IS_BILLED: FALSE
+        +IS_CLOSED: TRUE
+        +NOTES: 'Uitleg SEO (telefonisch), uitleg per e-mail'
+        +PROJECT_ID: 8387815
+        +SPENT_AT: '2015-07-14'
+        +TASK_ID: 3062687
+        +UPDATED_AT: '2015-07-20T09:00:40Z'
+        +USER_ID: 931602
+        +TIMER_STARTED_AT: DEFAULT RECORD
+    */
+    IF (dtfrom = DEFAULT DATETIME)
+      dtfrom := MakeDate(1900,1,1);
+
+    IF (dtuntil = DEFAULT DATETIME)
+      dtuntil := MakeDate(2099,12,31);
+
+    STRING url := UpdateUrlVariables("/projects/" || projectid || "/entries"
+                                   , [ "from" := FormatDateTime("%Y%m%d", dtfrom)
+                                     , "to" := FormatDateTime("%Y%m%d", dtuntil)
+                                     ]);
+
+    RECORD ARRAY data := this->GetHarvestAPIResult(url);
+
+    RECORD ARRAY entries;
+    FOREVERY (RECORD entry FROM data)
+    {
+      INSERT [ id := entry.day_entry.id
+             , hours := FloatToMoney(entry.day_entry.hours)
+             , spent_at := MakeDateFromText(entry.day_entry.spent_at)
+             , notes := TypeID(entry.day_entry.notes) = TypeID(STRING) ? entry.day_entry.notes : ""
+             , user_id := entry.day_entry.user_id
+             , task_id := entry.day_entry.task_id
+             , is_closed := entry.day_entry.is_closed
+             , is_billed := entry.day_entry.is_billed
+             ] INTO entries AT END;
+    }
+
+    RETURN [ value := entries
+           , ttl := 10 * 60000 // 10 mins
+           ];
+  }
+
+  RECORD FUNCTION GetCachedTasks()
+  {
+    /*
+       +RECORD
+        +TASK: RECORD
+         +BILLABLE_BY_DEFAULT: TRUE
+         +CREATED_AT: '2014-12-03T08:04:33Z'
+         +DEACTIVATED: FALSE
+         +DEFAULT_HOURLY_RATE: 95.00000000000000000000
+         +ID: 3668150
+         +IS_DEFAULT: FALSE
+         +NAME: '(Online) Marketing'
+         +UPDATED_AT: '2015-05-19T08:55:31Z'
+    */
+    RECORD ARRAY taskdata := this->GetHarvestAPIResult("/tasks");
+
+    RECORD ARRAY tasks;
+    FOREVERY (RECORD taskentry FROM taskdata)
+    {
+      INSERT [ id := taskentry.task.id
+             , name := taskentry.task.name
+             , created_at := MakeDateFromText(taskentry.task.created_at)
+             , updated_at := MakeDateFromText(taskentry.task.updated_at)
+             , default_hourly_rate := FloatToMoney(taskentry.task.default_hourly_rate)
+             , deactivated := taskentry.task.deactivated
+             ] INTO tasks AT END;
+    }
+
+    RETURN [ value := tasks
+           , ttl := 10 * 60000 // 10 mins
+           ];
+  }
+
+  RECORD FUNCTION GetCachedUsers()
+  {
+    /*
+     +RECORD
+      +USER: RECORD
+       +COST_RATE: 0.00000000000000000000
+       +CREATED_AT: '2015-02-16T11:15:03Z'
+       +DEFAULT_HOURLY_RATE: 95.00000000000000000000
+       +DEPARTMENT: 'OS'
+       +EMAIL: 'a.sinnema@itmundi.nl'
+       +FIRST_NAME: 'Anneke'
+       +HAS_ACCESS_TO_ALL_FUTURE_PROJECTS: TRUE
+       +ID: 931602
+       +IS_ACTIVE: TRUE
+       +IS_ADMIN: FALSE
+       +IS_CONTRACTOR: FALSE
+       +LAST_NAME: 'Sinnema'
+       +TELEPHONE: ''
+       +TIMEZONE: 'Amsterdam'
+       +UPDATED_AT: '2016-01-07T09:06:59Z'
+       +WANTS_NEWSLETTER: TRUE
+    */
+    RECORD ARRAY userdata := this->GetHarvestAPIResult("/people");
+
+    RECORD ARRAY users;
+    FOREVERY (RECORD userentry FROM userdata)
+    {
+      INSERT [ id := userentry.user.id
+             , created_at := MakeDateFromText(userentry.user.created_at)
+             , updated_at := MakeDateFromText(userentry.user.updated_at)
+             , default_hourly_rate := FloatToMoney(userentry.user.default_hourly_rate)
+             , department := userentry.user.department
+             , is_active := userentry.user.is_active
+             , is_admin := userentry.user.is_admin
+             , is_contractor := userentry.user.is_contractor
+             , first_name := userentry.user.first_name
+             , last_name := userentry.user.last_name
+             ] INTO users AT END;
+    }
+
+    RETURN [ value := users
+           , ttl := 10 * 60000 // 10 mins
+           ];
+  }
+
+  //************************************************************
+  //
+  // Internal functions
+  //
+  RECORD ARRAY FUNCTION NormalizeProjects(RECORD ARRAY apiresults)
+  {
+    RECORD ARRAY projects;
+    FOREVERY (RECORD proj FROM apiresults)
+      INSERT proj.project INTO projects AT END;
+
+    projects := SELECT id
+                     , name
+                     , active
+                     , client_id
+                     , hourly_rate := CellExists(projects, "hourly_rate") AND TypeID(hourly_rate) = TypeID(FLOAT) ? FloatToMoney(hourly_rate) : 0.0
+                     , budget :=      CellExists(projects, "cost_budget") AND TypeID(cost_budget) = TypeID(FLOAT) ? FloatToMoney(cost_budget) : 0.0
+                     , started_on :=  CellExists(projects, "starts_on") AND TypeID(starts_on) = TypeID(STRING) ? MakeDateFromText(starts_on) : DEFAULT DATETIME
+                     , ended_on :=    CellExists(projects, "ends_on") AND TypeID(ends_on) = TypeID(STRING) ? MakeDateFromText(ends_on) : DEFAULT DATETIME
+                  FROM projects;
+
+    RETURN projects;
+  }
+>;
+
+PUBLIC OBJECT FUNCTION GetHarvestAPI(STRING username, STRING password)
+{
+  RETURN NEW HarvestAPI(username, password);
+}

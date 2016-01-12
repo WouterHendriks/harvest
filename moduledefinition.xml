@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<module xmlns="http://www.webhare.net/xmlns/system/moduledefinition">
+
+  <meta>
+    <version>1.0</version>
+    <description>Harvest API</description>
+    <author>Nerds &amp; Company</author>
+    <packaging download="true">
+    </packaging>
+  </meta>
+<!--
+  <services xmlns="http://www.webhare.net/xmlns/system/moduledefinition">
+    <webservice name="rpc" transports="jsonrpc" library="rpc.whlib" primarytrans="auto">
+      <accesscheck/>
+      <vmrights/>
+    </webservice>
+  </services>
+-->
+</module>

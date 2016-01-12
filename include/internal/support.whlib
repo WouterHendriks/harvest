@@ -1,0 +1,52 @@
+<?wh
+LOADLIB "wh::filetypes/xml.whlib";
+LOADLIB "wh::xml/dom.whlib";
+
+PUBLIC RECORD ARRAY FUNCTION NodeToRecordArray(OBJECT node)
+{
+  IF (NOT ObjectExists(node))
+    Abort("Could not find node");
+
+  RECORD ARRAY output;
+  OBJECT ARRAY allchildren := node->QuerySelectorAll("*")->GetCurrentElements();
+  FOREVERY(OBJECT child FROM allchildren)
+  {
+    RECORD childnode;
+    IF(child->childelementcount > 0)
+    {
+      RECORD newrecord;
+      FOREVERY(RECORD entry FROM NodeToRecordArray(child))
+      //FOREVERY(RECORD entry FROM NodeToRecordArray(child, dupehandler))
+      {
+        RECORD ARRAY temp := UnpackRecord(entry);
+        IF(NOT CellExists(newrecord, temp.name))
+          newrecord := CellInsert(newrecord, temp.name, TrimWhitespace(DecodeValue(temp.value)));
+        ELSE
+        {
+          //dupehandler(temp.name);//newrecord := CellUpdate(newrecord, temp.name, TrimWhitespace(DecodeValue(temp.value)));
+          CONTINUE;
+        }
+      }
+      INSERT newrecord INTO output AT END;
+    }
+    ELSE
+    {
+      IF(Length(output) = 0)
+        INSERT MakeEmptyRecord() INTO output AT END;
+
+      IF(CellExists(output[END-1], child->nodename))
+        IF(GetCell(output[END-1], child->nodename) = child->outerxml)
+        {
+          //dupehandler(child->nodename);
+          CONTINUE;// It's a dupe, just ignore it.
+        }
+        ELSE
+        {
+          output[END-1] := CellUpdate(output[END-1], child->nodename, TrimWhitespace(DecodeValue(child->innerxml)));// Assume the latter value is more relevant
+          CONTINUE;
+        }
+      output[END-1] := CellInsert(output[END-1], child->nodename, TrimWhitespace(DecodeValue(child->innerxml)));
+    }
+  }
+  RETURN output;
+}
