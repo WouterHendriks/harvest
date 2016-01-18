@@ -51,7 +51,17 @@ PUBLIC OBJECTTYPE HarvestAPI
     IF (browsercontent = "[]" OR TrimWhiteSpace(browsercontent) = "")
       RETURN DEFAULT RECORD ARRAY;
 
-    RETURN DecodeJSON(browsercontent);
+    VARIANT result := DecodeJSON(browsercontent);
+
+    IF (TypeID(result) = TypeID(RECORD))
+    {
+      IF (CellExists(result, "message") AND result.message != "")
+        THROW NEW Exception("Error when connecting to Harvest: " || result.message);
+      ELSE
+        THROW NEW Exception("Unknown error: " || AnyToString(result,'tree'));
+    }
+
+    RETURN result;
   }
 
   /** @short Returns active clients.
