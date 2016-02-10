@@ -33,7 +33,7 @@ PUBLIC OBJECTTYPE HarvestAPI
   //
   // Public functions
   //
-  PUBLIC RECORD ARRAY FUNCTION GetHarvestAPIResult(STRING path)
+  PUBLIC VARIANT FUNCTION GetHarvestAPIResult(STRING path)
   {
     IF (Left(path,1) != "/")
       path := "/" || path;
@@ -55,11 +55,51 @@ PUBLIC OBJECTTYPE HarvestAPI
 
     IF (TypeID(result) = TypeID(RECORD))
     {
-      IF (CellExists(result, "message") AND result.message != "")
+      IF (CellExists(result, "project") AND TypeID(result.project) = TypeID(RECORD))
+        result := result.project;
+      ELSE IF (CellExists(result, "message") AND result.message != "")
         THROW NEW Exception("Error when connecting to Harvest: " || result.message);
       ELSE
         THROW NEW Exception("Unknown error: " || AnyToString(result,'tree'));
     }
+
+    RETURN result;
+  }
+
+  PUBLIC RECORD FUNCTION PostRequest(STRING path, RECORD data)
+  {
+    RECORD result := [ success := FALSE
+                     , error := ""
+                     ];
+
+    IF (Left(path,1) != "/")
+      path := "/" || path;
+
+    STRING url := "https://" || EncodeURL(this->username) || ":" || this->password || "@nerdsandcompany.harvestapp.com" || path;
+
+    OBJECT browser := NEW WebBrowser;
+    browser->SendRawRequest("POST", url, [[ field := "Content-Type", value := "application/json" ]
+                                         ,[ field := "Accept", value := "application/json" ]
+                                         ], StringToBlob(EncodeJSON(data)));
+
+    STRING browsercontent := BlobToString(browser->content,-1);
+
+    IF (Length(browser->content) = 0
+        OR browsercontent = "[]"
+        OR TrimWhiteSpace(browsercontent) = "")
+    {
+      result.success := TRUE;
+      RETURN result;
+    }
+
+    RECORD browserresult := DecodeJSON(browsercontent);
+    IF (RecordExists(browserresult)) // only a message in case of errors; aye, a silly API it be
+    {
+      result.error := browserresult.message;
+      RETURN result;
+    }
+
+    result.success := TRUE; // I guess...
 
     RETURN result;
   }
@@ -75,6 +115,11 @@ PUBLIC OBJECTTYPE HarvestAPI
   PUBLIC RECORD ARRAY FUNCTION GetActiveClients()
   {
     RETURN GetAdhocCached([ type := "active-clients" ], PTR this->GetCachedActiveClients);
+  }
+
+  PUBLIC RECORD FUNCTION GetProject(INTEGER projectid)
+  {
+    RETURN GetAdhocCached([ type := "project", id := projectid ], PTR this->GetCachedProject(projectid));
   }
 
   /** @short Returns all active projects.
@@ -254,6 +299,43 @@ PUBLIC OBJECTTYPE HarvestAPI
     RECORD ARRAY projects := this->NormalizeProjects(projectdata);
 
     RETURN [ value := projects
+           , ttl := 10 * 60000 // 10 mins
+           ];
+  }
+
+  RECORD FUNCTION GetCachedProject(INTEGER projectid)
+  {
+    /*
+      +RECORD
+       +DAY_ENTRY: RECORD
+        +ADJUSTMENT_RECORD: FALSE
+        +CREATED_AT: '2015-07-14T10:19:55Z'
+        +HOURS: 0.50000000000000000000
+        +ID: 353143785
+        +IS_BILLED: FALSE
+        +IS_CLOSED: TRUE
+        +NOTES: 'Uitleg SEO (telefonisch), uitleg per e-mail'
+        +PROJECT_ID: 8387815
+        +SPENT_AT: '2015-07-14'
+        +TASK_ID: 3062687
+        +UPDATED_AT: '2015-07-20T09:00:40Z'
+        +USER_ID: 931602
+        +TIMER_STARTED_AT: DEFAULT RECORD
+    */
+    RECORD project := this->GetHarvestAPIResult("/projects/" || projectid);
+
+    IF (RecordExists(project))
+    {
+      RECORD ARRAY projects := SELECT *
+                                    , starts_on := MakeDateFromText(starts_on)
+                                    , created_at := MakeDateFromText(created_at)
+                                    , updated_at := MakeDateFromText(updated_at)
+                                 FROM [ project ];
+
+      project := projects[0];
+    }
+
+    RETURN [ value := project
            , ttl := 10 * 60000 // 10 mins
            ];
   }
