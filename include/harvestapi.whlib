@@ -130,7 +130,7 @@ PUBLIC OBJECTTYPE HarvestAPI
         @cell(INTEGER) return.client_id
         @cell(MONEY) return.hourly_rate
         @cell(MONEY) return.budget
-        @cell(DATETIME) return.started_on
+        @cell(DATETIME) return.starts_on
         @cell(DATETIME) return.ended_on
   */
   PUBLIC RECORD ARRAY FUNCTION GetActiveProjects()
@@ -482,11 +482,16 @@ PUBLIC OBJECTTYPE HarvestAPI
     projects := SELECT id
                      , name
                      , active
+                     , bill_by
                      , client_id
-                     , hourly_rate := CellExists(projects, "hourly_rate") AND TypeID(hourly_rate) = TypeID(FLOAT) ? FloatToMoney(hourly_rate) : 0.0
-                     , budget :=      CellExists(projects, "cost_budget") AND TypeID(cost_budget) = TypeID(FLOAT) ? FloatToMoney(cost_budget) : 0.0
-                     , started_on :=  CellExists(projects, "starts_on") AND TypeID(starts_on) = TypeID(STRING) ? MakeDateFromText(starts_on) : DEFAULT DATETIME
-                     , ended_on :=    CellExists(projects, "ends_on") AND TypeID(ends_on) = TypeID(STRING) ? MakeDateFromText(ends_on) : DEFAULT DATETIME
+                     , budget_by
+                     , estimate
+                     , budget :=      TypeID(budget) = TypeID(RECORD) ? MONEY(0.0) : FloatToMoney(budget)
+                     , cost_budget := TypeID(cost_budget) = TypeID(FLOAT) ? MONEY(cost_budget) : 0.0
+                     , hourly_rate := TypeID(hourly_rate) = TypeID(FLOAT) ? MONEY(hourly_rate) : 0.0
+                     , starts_on :=   TypeID(starts_on) = TypeID(STRING) ? MakeDateFromText(starts_on) : DEFAULT DATETIME
+                     , ends_on :=     TypeID(ends_on) = TypeID(STRING) ? MakeDateFromText(ends_on) : DEFAULT DATETIME
+                     , updated_at :=  TypeID(updated_at) = TypeID(STRING) ? MakeDateFromText(updated_at) : DEFAULT DATETIME
                   FROM projects;
 
     RETURN projects;
