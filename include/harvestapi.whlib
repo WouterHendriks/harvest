@@ -10,7 +10,7 @@ LOADLIB "relative::internal/support.whlib";
 
 //__webbrowser_debugall := TRUE;
 
-PUBLIC OBJECTTYPE HarvestAPI
+OBJECTTYPE HarvestAPI
 <
   //************************************************************
   //
@@ -500,5 +500,11 @@ PUBLIC OBJECTTYPE HarvestAPI
 
 PUBLIC OBJECT FUNCTION GetHarvestAPI(STRING username, STRING password)
 {
+  IF (username = "")
+    THROW NEW Exception("Missing username");
+
+  IF (password = "")
+    THROW NEW Exception("Missing password");
+
   RETURN NEW HarvestAPI(username, password);
 }
