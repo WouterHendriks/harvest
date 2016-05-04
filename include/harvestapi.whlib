@@ -479,6 +479,8 @@ OBJECTTYPE HarvestAPI
     FOREVERY (RECORD proj FROM apiresults)
       INSERT proj.project INTO projects AT END;
 
+    INTEGER ARRAY moneytypeids := [TypeID(FLOAT),TypeID(INTEGER),TypeID(MONEY)];
+
     projects := SELECT id
                      , name
                      , active
@@ -487,8 +489,8 @@ OBJECTTYPE HarvestAPI
                      , budget_by
                      , estimate
                      , budget :=      TypeID(budget) = TypeID(RECORD) ? MONEY(0.0) : FloatToMoney(budget)
-                     , cost_budget := TypeID(cost_budget) = TypeID(FLOAT) ? MONEY(cost_budget) : 0.0
-                     , hourly_rate := TypeID(hourly_rate) = TypeID(FLOAT) ? MONEY(hourly_rate) : 0.0
+                     , cost_budget := TypeID(cost_budget) IN moneytypeids ? MONEY(cost_budget) : 0.0
+                     , hourly_rate := TypeID(hourly_rate) IN moneytypeids ? MONEY(hourly_rate) : 0.0
                      , starts_on :=   TypeID(starts_on) = TypeID(STRING) ? MakeDateFromText(starts_on) : DEFAULT DATETIME
                      , ends_on :=     TypeID(ends_on) = TypeID(STRING) ? MakeDateFromText(ends_on) : DEFAULT DATETIME
                      , updated_at :=  TypeID(updated_at) = TypeID(STRING) ? MakeDateFromText(updated_at) : DEFAULT DATETIME
