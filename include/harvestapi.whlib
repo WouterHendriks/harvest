@@ -18,13 +18,15 @@ OBJECTTYPE HarvestAPI
   //
   STRING username;
   STRING password;
+  STRING urltag;
 
   //************************************************************
   //
   // Constructor
   //
-  MACRO NEW(STRING username, STRING password)
+  MACRO NEW(STRING urltag, STRING username, STRING password)
   {
+    this->urltag := urltag;
     this->username := username;
     this->password := password;
   }
@@ -38,7 +40,7 @@ OBJECTTYPE HarvestAPI
     IF (Left(path,1) != "/")
       path := "/" || path;
 
-    STRING url := "https://" || EncodeURL(this->username) || ":" || this->password || "@nerdsandcompany.harvestapp.com" || path;
+    STRING url := "https://" || EncodeURL(this->username) || ":" || this->password || "@" || this->urltag || ".harvestapp.com" || path;
 
     OBJECT browser := NEW WebBrowser;
     browser->SendRawRequest("GET", url, [[ field := "Content-Type", value := "application/json" ]
@@ -57,6 +59,8 @@ OBJECTTYPE HarvestAPI
     {
       IF (CellExists(result, "project") AND TypeID(result.project) = TypeID(RECORD))
         result := result.project;
+      ELSE IF (CellExists(result, "client") AND TypeID(result.client) = TypeID(RECORD))
+        result := result.client;
       ELSE IF (CellExists(result, "message") AND result.message != "")
         THROW NEW Exception("Error when connecting to Harvest: " || result.message);
       ELSE
@@ -104,6 +108,16 @@ OBJECTTYPE HarvestAPI
     RETURN result;
   }
 
+  /** @short Get client by id
+  */
+  PUBLIC RECORD FUNCTION GetClient(INTEGER clientid)
+  {
+    IF (clientid = 0)
+      THROW NEW Exception("Missing client id");
+
+    RETURN GetAdhocCached([ type := "client", id := clientid ], PTR this->GetCachedClient(clientid));
+  }
+
   /** @short Returns active clients.
       @return
         @cell(INTEGER) return.id
@@ -117,7 +131,9 @@ OBJECTTYPE HarvestAPI
     RETURN GetAdhocCached([ type := "active-clients" ], PTR this->GetCachedActiveClients);
   }
 
-  PUBLIC RECORD FUNCTION GetProject(INTEGER projectid)
+    /** @short Get project by id
+  */
+PUBLIC RECORD FUNCTION GetProject(INTEGER projectid)
   {
     RETURN GetAdhocCached([ type := "project", id := projectid ], PTR this->GetCachedProject(projectid));
   }
@@ -235,6 +251,28 @@ OBJECTTYPE HarvestAPI
                  FROM clients;
 
     RETURN [ value := clients
+           , ttl := 10 * 60000 // 10 mins
+           ];
+  }
+
+  RECORD FUNCTION GetCachedClient(INTEGER clientid)
+  {
+    RECORD clientdata := this->GetHarvestAPIResult("/clients/" || clientid);
+
+    // enrich/fix data
+    IF (RecordExists(clientdata))
+    {
+      clientdata := SELECT id
+                         , name
+                         , details
+                         , address
+                         , created_at := CellExists(clientdata, "created_at") AND TypeID(created_at) = TypeID(STRING) ? MakeDateFromText(created_at) : DEFAULT DATETIME
+                         , updated_at := CellExists(clientdata, "updated_at") AND TypeID(updated_at) = TypeID(STRING) ? MakeDateFromText(updated_at) : DEFAULT DATETIME
+                      FROM [clientdata]
+                     LIMIT 1;
+    }
+
+    RETURN [ value := clientdata
            , ttl := 10 * 60000 // 10 mins
            ];
   }
@@ -500,13 +538,20 @@ OBJECTTYPE HarvestAPI
   }
 >;
 
-PUBLIC OBJECT FUNCTION GetHarvestAPI(STRING username, STRING password)
+PUBLIC OBJECT FUNCTION GetHarvestAPI(STRING urltag, STRING username, STRING password)
 {
+  IF (urltag = ""
+      OR SearchSubString(urltag, ".") > -1
+      OR SearchSubString(urltag, "/") > -1)
+  {
+    THROW NEW Exception("Harvest URL tag not set or invalid; this should be the xxxxxxx part in the Harvest https://xxxxxxxx.harvestapp.com URL");
+  }
+
   IF (username = "")
     THROW NEW Exception("Missing username");
 
   IF (password = "")
     THROW NEW Exception("Missing password");
 
-  RETURN NEW HarvestAPI(username, password);
+  RETURN NEW HarvestAPI(urltag, username, password);
 }
